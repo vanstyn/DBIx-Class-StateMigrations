@@ -8,34 +8,20 @@ use warnings;
 use Moo;
 use Types::Standard qw(:all);
 
-use Scalar::Util 'blessed';
+has 'eval_code', is => 'ro', isa => Maybe[Str], lazy => 1, default => sub { undef };
 
-has 'Migration', is => 'ro', required => 1, isa => InstanceOf['DBIx::Class::StateMigrations::Migration'];
-
-has 'routine_coderef', (
-  is => 'ro', lazy => 1, 
-  isa => CodeRef,
-  default => sub { (shift)->_get_routine_coderef }
-);
-
-sub _get_routine_coderef { ... }
-
-sub BUILD {
+has 'CodeRef', is => 'ro', lazy => 1, default => sub {
   my $self = shift;
-  $self->CodeRef
-}
+  
+  my $coderef = eval $self->eval_code;
+  
+  $coderef && (ref($coderef)||'' eq 'CODE') or die "eval_code did not return a CodeRef";
+  
+  $coderef
+  
+}, isa => CodeRef;
 
 
-sub execute {
-  my ($self, $db) = @_;
-  
-  die "execute must be supplied connected DBIx::Class::Schema instance argument" 
-    unless($db && blessed($db) && $db->isa('DBIx::Class::Schema'));
-  
-  die "Supplied schema object is not connected" unless ($db->storage->connected);
-  
-  $self->routine_coderef->( $db, $self )
-}
 
 
 

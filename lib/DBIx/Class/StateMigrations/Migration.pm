@@ -5,82 +5,208 @@ use warnings;
 
 # ABSTRACT: individual migration for a single version bump
 
-our VERSION = '0.01';
-
 use Moo;
 use Types::Standard qw(:all);
-use String::Random;
 
-use DBIx::Class::Schema::Diff 1.10_01;
+use Scalar::Util 'blessed';
+use Path::Class qw( file dir );
+use Data::Dumper::Concise;
+require Module::Locate;
 
+use DBIx::Class::StateMigrations::Migration::Routine::PerlCode;
+use DBIx::Class::StateMigrations::Migration::Routine::SQL;
 
-has 'schema_class', is => 'ro', lazy => 1, isa => ClassName;
-
-has 'connect_info_args', is => 'ro', lazy => 1, isa => Ref;
-
-
-has 'connected_schema', is => 'ro', lazy => 1, default => sub {
+has 'migration_name', is => 'ro', lazy => 1, default => sub {
   my $self = shift;
-
-}, isa => ClassName;
-
-
-
-has 'dbh', is => 'ro', lazy => 1, default => sub {
-  my $self shift;
-  $self->connected_schema->storage->dbh
-}, isa => InstanceOf['DBI::db'];
-
-
-has 'Driver', is => 'ro', lazy => 1, default => sub {
-  my $self shift;
-  $self->dbh->{Driver}{Name}
+  $self->_migration_name_from_classname
+    ? $self->_migration_name_from_classname
+    : join('_', 'sm', map { $_->fingerprint } @{ $self->trigger_SchemaStates })
 }, isa => Str;
 
+has 'trigger_SchemaStates', is => 'ro', required => 1, isa => ArrayRef[
+  InstanceOf['DBIx::Class::StateMigrations::SchemaState']
+];
 
-has 'State',
-  is => 'ro', lazy => 1,
-  isa => Maybe[InstanceOf['DBIx::Class::Schema::Diff::State']],
-  default => sub { 
-    my $self = shift;
-    DBIx::Class::Schema::Diff->state( schema => $ref_class )
+has 'completed_SchemaState', is => 'ro', isa => Maybe[
+  InstanceOf['DBIx::Class::StateMigrations::SchemaState']
+], default => sub { undef };
+
+
+has 'Routines', is => 'ro', required => 1, lazy => 1, default => sub {
+  my $self = shift;
+  return undef unless ($self->is_migration_class && $self->directory);
+  my $Dir = dir( $self->directory, 'routines' )->absolute;
+  return undef unless (-d $Dir);
+  
+  my @routines = ();
+  
+  for my $File ($Dir->children) {
+    next if $File->is_dir;
+    next unless (-f $File);
+    
+    if(my $ext = (reverse split(/\./,$File->basename))[0]) {
+      if (lc($ext) eq 'pl') {
+        push @routines, DBIx::Class::StateMigrations::Migration::Routine::PerlCode->new(
+          file_path => $File->absolute->stringify,
+          Migration => $self
+        );
+      }
+      elsif (lc($ext) eq 'sql') {
+        push @routines, DBIx::Class::StateMigrations::Migration::Routine::SQL->new(
+          file_path => $File->absolute->stringify,
+          Migration => $self
+        );
+      }
+    }
   }
-);
   
+  return \@routines
 
-has 'fingerprint', is => 'ro', lazy => 1, default => sub {
+}, isa => ArrayRef[InstanceOf['DBIx::Class::StateMigrations::Migration::Routine']];
+
+
+has 'directory', is => 'ro', lazy => 1, default => sub {
   my $self = shift;
-  die __PACKAGE__ . ' must supply either a checksum "fingerprint" or "State"' unless ($self->State);
-  $self->State->fingerprint
-}, isa => Str;
+  return undef unless ($self->is_migration_class);
+  
+  my $pm_path = Module::Locate::locate(blessed $self) or die join('',
+    "Failed to locate pm file path for class '",blessed($self),"'"
+  );
+  
+  file( $pm_path )->parent->absolute->stringify
+}, isa => Maybe[Str]; 
 
 
-has 'loader_options', is => 'ro', default => sub {{
-  naming => { ALL => 'v7'},
-  use_namespaces => 1,
-  use_moose => 0,
-  debug => 0,
-  qualify_objects => 1
-}}, isa => HashRef;
+
+has 'is_subclass', is => 'ro', lazy => 1, init_arg => undef, default => sub {
+  my $self = shift;
+  blessed($self) ne 'DBIx::Class::StateMigrations::Migration'
+}, isa => Bool;
+
+has 'is_migration_class', is => 'ro', lazy => 1, init_arg => undef, default => sub {
+  my $self = shift;
+  my $name = $self->_migration_name_from_classname;
+  defined $name && $name eq $self->migration_name 
+}, isa => Bool;
 
 
-has 'loaded_schema_class', is => 'ro', lazy => 1, sub {
+has '_migration_name_from_classname', is => 'ro', init_arg => undef, lazy => 1, default => sub {
+  my $self = shift;
+  return undef unless ($self->is_subclass);
+  my $class = blessed($self);
+  my ($junk,$name) = split(/Migration\_/,$class,2);
+  $name
+}, isa => Maybe[Str];
+
+
+
+
+
+
+sub BUILD {
   my $self = shift;
   
-  my $schema_class = $self->schema_class || 'ScannedSchmeaForMigration';
+  my $name = $self->migration_name;
   
-  my $ref_class = join('_',$schema_class,'RefSchema',String::Random->new->randregex('[a-z0-9A-Z]{5}'));
+  die "invalid migration_name '$name' - can only contain alpha chars and underscore _" 
+    unless($name =~ /^[a-zA-Z0-9\_]+$/);
   
-  DBIx::Class::Schema::Loader::make_schema_at(
-    $ref_class => $self->loader_options, $self->connect_info_args  
-  ) or die "Loading schema failed";
+  die "At least one trigger_SchemaState required" unless (
+    scalar(@{ $self->trigger_SchemaStates }) > 0
+  );
 
-  $ref_class
+}
+
+
+sub new_from_migration_dir {
+  my $self = shift;
+  my $dir = shift or die "dir not supplied";
   
-}, isa => Str;
+  my $Dir = dir( $dir )->absolute;
+  -d $Dir or die "'$dir' does not exist or is not a directory";
+  
+  my $pm_file;
+  for my $File ($Dir->children) {
+    next if $File->is_dir;
+    next unless (-f $File);
+    my $ext = (reverse split(/\./,$File->basename))[0];
+    next unless ($ext && lc($ext) eq 'pm');
+    
+    die "Error - multiple pm files found in directory '$dir'";
+    
+    $pm_file = $File->absolute;
+  }
+  
+  die "No Migration pm file found in directory '$dir'" unless ($pm_file);
+  die "Invalid Migration pm file '$pm_file' - must start with 'Migration_'" 
+    unless ($pm_file->basename =~ /^Migration_/);
+    
+  my $mclass = $pm_file->basename;
+  $mclass =~ s/\.pm$//i;
+  
+  die "Not loading $pm_file - class named '$mclass' already loaded!" if (Module::Locate::locate($mclass));
+  
+  my $require = "require '$pm_file'";
+  eval $require;
+  
+  die "Error loading $pm_file - '$mclass' still not loaded after require" unless (Module::Locate::locate($mclass));
+  
+  my $Migration = $mclass->new;
+  
+  die "Error loading new $mclass object instance - not a valid Migration class" unless (
+    blessed($Migration) && $Migration->isa('DBIx::Class::StateMigrations::Migration')
+  );
+  
+  die "New $mclass object instance returns false for ->is_migration_class" unless (
+    $Migration->is_migration_class
+  );
+  
+  return $Migration
+}
 
 
 
+sub as_subclass_pm_code {
+  my $self = shift;
+  
+  my $classname = join('_','Migration',$self->migration_name);
+  
+  my @pm_file_lines = (
+    'package ',
+    '   ' . $classname . ';','',
+    'use strict;',
+    'use warnings;','',
+    'use Moo;',
+    'extends "DBIx::Class::StateMigrations::Migration";',''
+  );
+
+  push @pm_file_lines, q~has '+trigger_SchemaStates', default => sub { ~,
+    Dumper( $self->trigger_SchemaStates ),
+  '};','';
+  
+  push @pm_file_lines, q~has '+completed_SchemaState', default => sub { ~,
+    Dumper( $self->completed_SchemaState ),
+  '};','';
+  
+  return join("\n",@pm_file_lines);
+
+}
+
+sub write_subclass_pm_file {
+  my $self = shift;
+  my $dir = shift or die "dir not supplied";
+  
+  my $Dir = dir( $dir )->absolute;
+  
+  -d $Dir or die "'$dir' does not exist or is not a directory";
+  
+  my $pm_file = file( $Dir, $self->migration_name . '.pm' );
+  
+  -f $pm_file and die "write_subclass_pm_file(): pm file '$pm_file' already exists";
+  
+  $pm_file->spew( $self->as_subclass_pm_code );
+
+}
 
 
 1;

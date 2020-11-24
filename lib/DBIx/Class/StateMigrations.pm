@@ -16,7 +16,7 @@ use Path::Class qw/file dir/;
 use DBIx::Class::Schema::Diff;
 use DBIx::Class::Schema::Diff::State;
 use DBIx::Class::StateMigrations::SchemaState;
-#use DBIx::Class::StateMigrations::Migration;
+use DBIx::Class::StateMigrations::Migration;
 
 has 'migrations_dir', is => 'ro', default => sub { undef };
 has 'connected_schema', is => 'ro', required => 1, isa => InstanceOf['DBIx::Class::Schema'];
@@ -43,8 +43,18 @@ has 'diff_filters', is => 'ro', default => sub {[
 has 'Migrations', is => 'ro', lazy => 1, default => sub {
   my $self = shift;
   if(my $dir = $self->migrations_dir) {
-  
-  
+    my $Dir = dir( $dir )->absolute;
+    -d $Dir or die "migrations dir '$dir' not found or is not a directory";
+    
+    my @migrations = ();
+    
+    for my $m_dir ($Dir->children) {
+      next unless $m_dir->is_dir;
+      my $Migration = DBIx::Class::StateMigrations::Migration
+        ->new_from_migration_dir($m_dir->absolute->stringify);
+      push @migrations, $Migration;
+    }
+    return \@migrations;
   }
   else {
     return []
@@ -93,7 +103,10 @@ sub BUILD {
   my $self = shift;
   try{$self->connected_schema->storage->connected} or die join('',
     'Supplied connected_schema "', $self->connected_schema, '" is not connected'
-  )
+  );
+  
+  $self->Migrations;
+  
 }
 
 
