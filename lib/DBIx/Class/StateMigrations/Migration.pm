@@ -59,10 +59,13 @@ has 'Routines', is => 'ro', required => 1, lazy => 1, default => sub {
   
   my @routines = ();
   
-  for my $File ($Dir->children) {
-    next if $File->is_dir;
-    next unless (-f $File);
-    
+  my @File_list = 
+    sort { $a->basename cmp $b->basename }
+    grep { ! $_->is_dir && -f $_ }
+    $Dir->children;
+  
+  for my $File (@File_list) {
+
     if(my $ext = (reverse split(/\./,$File->basename))[0]) {
       if (lc($ext) eq 'pl') {
         push @routines, DBIx::Class::StateMigrations::Migration::Routine::PerlCode->new(
