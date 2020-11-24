@@ -13,6 +13,7 @@ use Path::Class qw( file dir );
 require Data::Dump;
 require Module::Locate;
 require Module::Runtime;
+use Class::Inspector;
 
 use DBIx::Class::StateMigrations::Migration::Routine::PerlCode;
 use DBIx::Class::StateMigrations::Migration::Routine::SQL;
@@ -83,10 +84,19 @@ has 'Routines', is => 'ro', required => 1, lazy => 1, default => sub {
 }, isa => ArrayRef[InstanceOf['DBIx::Class::StateMigrations::Migration::Routine']];
 
 
+sub routines_executed {
+  my ($self, $set) = @_;
+  $self->__routines_executed(1) if ($set && ! $self->__routines_executed);
+  $self->__routines_executed
+}
+has '__routines_executed', is => 'rw', init_arg => undef, isa => Bool, default => sub { 0 };
+
 sub execute_routines {
   my $self = shift;
   my $db = shift;
   my $callback = shift;
+  
+  die "routines already executed!" if ($self->routines_executed);
   
   die "execute_routines must be supplied connected DBIx::Class::Schema instance argument" 
     unless($db && blessed($db) && $db->isa('DBIx::Class::Schema'));
@@ -100,6 +110,8 @@ sub execute_routines {
     my $ret = $Routine->execute( $db, $self );
     $callback->($Routine,$ret) if $callback;
   }
+  
+  $self->routines_executed(1);
 }
 
 sub matches_SchemaState {
@@ -178,12 +190,16 @@ sub new_from_migration_dir {
   my $mclass = $pm_file->basename;
   $mclass =~ s/\.pm$//i;
   
-  die "Not loading $pm_file - class named '$mclass' already loaded!" if (Module::Locate::locate($mclass));
+  unless (Class::Inspector->loaded($mclass)) {
   
-  eval "use lib '$Dir'";
-  Module::Runtime::require_module($mclass);
-  
-  die "Error loading $pm_file - '$mclass' still not loaded after require" unless (Module::Locate::locate($mclass));
+    # TODO: this is now probably redundant:
+    die "Not loading $pm_file - class named '$mclass' already loaded!" if (Module::Locate::locate($mclass));
+    
+    eval "use lib '$Dir'";
+    Module::Runtime::require_module($mclass);
+    
+    die "Error loading $pm_file - '$mclass' still not loaded after require" unless (Module::Locate::locate($mclass));
+  }
   
   my $Migration = $mclass->new;
   

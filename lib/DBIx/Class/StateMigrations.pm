@@ -98,7 +98,7 @@ has 'Migrations', is => 'ro', lazy => 1, default => sub {
       next unless $m_dir->is_dir;
       my $Migration = DBIx::Class::StateMigrations::Migration
         ->new_from_migration_dir($m_dir->absolute->stringify);
-      push @migrations, $Migration;
+      push @migrations, $Migration if ($Migration);
     }
     return \@migrations;
   }
@@ -123,6 +123,12 @@ sub _validate_Migrations {
   ) if ($number_wrong > 0);
   
   return 1;
+}
+
+
+sub matched_and_executed {
+  my $self = shift;
+  $self->matched_Migration and $self->matched_Migration->routines_executed
 }
 
 
