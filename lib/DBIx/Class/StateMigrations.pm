@@ -5,7 +5,7 @@ use warnings;
 
 # ABSTRACT: Schema migrations via checksums instead of versions
 
-our $VERSION = '0.01';
+our $VERSION = '0.001';
 
 use Moo;
 use Types::Standard qw(:all);
@@ -259,10 +259,12 @@ DBIx::Class::Schema::StateMigrations - Schema migrations via checksums instead o
 
 =head1 DESCRIPTION
 
+EXPERIMENTAL - not ready for production use yet
+
 This is module serves essentially the same purpose as L<DBIx::Class::DeploymentHandler> except it
 uses checksums generated from the actual current state of the schema to identify the current 
 "version" and what migration scripts should be ran for that version, rather than relying on a
-declatred version number value which is subject to human error.
+declared version number value which is subject to human error.
 
 =head1 CONFIGURATION
 
