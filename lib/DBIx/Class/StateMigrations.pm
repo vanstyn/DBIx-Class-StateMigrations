@@ -13,7 +13,8 @@ use Scalar::Util 'blessed';
 use Try::Tiny;
 
 use Path::Class qw/file dir/;
-use DBIx::Class::Schema::Diff;
+use DBIx::Class::Schema::Diff 1.11;
+
 use DBIx::Class::Schema::Diff::State;
 use DBIx::Class::StateMigrations::SchemaState;
 use DBIx::Class::StateMigrations::Migration;
