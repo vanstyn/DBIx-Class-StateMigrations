@@ -46,7 +46,7 @@ __END__
 
 =head1 NAME
 
-DBIx::Class::BlockchainMigrations::Migration::Routine - Base class for an individual routine within a migration
+DBIx::Class::StateMigrations::Migration::Routine - Base class for an individual routine within a migration
 
 =head1 DESCRIPTION
 

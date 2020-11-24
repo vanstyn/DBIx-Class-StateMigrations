@@ -61,7 +61,7 @@ DBIx::Class::StateMigrations::Migration::Routine::PerlCode - individual routine
 
 =head1 SYNOPSIS
 
- use DBIx::Class::Schema::BlockchainMigrations;
+ use DBIx::Class::Schema::StateMigrations;
  
  ...
  
