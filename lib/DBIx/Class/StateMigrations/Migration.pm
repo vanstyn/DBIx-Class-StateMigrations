@@ -17,20 +17,17 @@ require Module::Runtime;
 use DBIx::Class::StateMigrations::Migration::Routine::PerlCode;
 use DBIx::Class::StateMigrations::Migration::Routine::SQL;
 
-
-sub matches_SchemaState {
-  my ($self, $SchemaState) = @_;
+sub BUILD {
+  my $self = shift;
   
-  die "check_SchemaState(): Bad argument - not a SchemaState object" unless (
-    $SchemaState && blessed($SchemaState)
-    && $SchemaState->isa('DBIx::Class::StateMigrations::SchemaState')
+  my $name = $self->migration_name;
+  
+  die "invalid migration_name '$name' - can only contain alpha chars and underscore _" 
+    unless($name =~ /^[a-zA-Z0-9\_]+$/);
+  
+  die "At least one trigger_SchemaState required" unless (
+    scalar(@{ $self->trigger_SchemaStates }) > 0
   );
-  
-  for my $SS (@{ $self->trigger_SchemaStates }) {
-    return 1 if ($SS->fingerprint eq $SchemaState->fingerprint);
-  }
-
-  return 0
 }
 
 
@@ -51,6 +48,7 @@ has 'completed_SchemaState', is => 'ro', isa => Maybe[
   InstanceOf['DBIx::Class::StateMigrations::SchemaState']
 ], default => sub { undef };
 
+sub number_routines { scalar(@{ (shift)->Routines }) };
 
 has 'Routines', is => 'ro', required => 1, lazy => 1, default => sub {
   my $self = shift;
@@ -85,6 +83,41 @@ has 'Routines', is => 'ro', required => 1, lazy => 1, default => sub {
 }, isa => ArrayRef[InstanceOf['DBIx::Class::StateMigrations::Migration::Routine']];
 
 
+sub execute_routines {
+  my $self = shift;
+  my $db = shift;
+  my $callback = shift;
+  
+  die "execute_routines must be supplied connected DBIx::Class::Schema instance argument" 
+    unless($db && blessed($db) && $db->isa('DBIx::Class::Schema'));
+  
+  die "Optional callback must be a CodeRef" if ($callback && (ref($callback)||'') ne 'CODE');
+   
+  # Empty/no-op Migration:
+  return unless ($self->number_routines > 0);
+  
+  for my $Routine (@{ $self->Routines }) {
+    my $ret = $Routine->execute( $db, $self );
+    $callback->($Routine,$ret) if $callback;
+  }
+}
+
+sub matches_SchemaState {
+  my ($self, $SchemaState) = @_;
+  
+  die "check_SchemaState(): Bad argument - not a SchemaState object" unless (
+    $SchemaState && blessed($SchemaState)
+    && $SchemaState->isa('DBIx::Class::StateMigrations::SchemaState')
+  );
+  
+  for my $SS (@{ $self->trigger_SchemaStates }) {
+    return 1 if ($SS->fingerprint eq $SchemaState->fingerprint);
+  }
+
+  return 0
+}
+
+
 has 'directory', is => 'ro', lazy => 1, default => sub {
   my $self = shift;
   return undef unless ($self->is_migration_class);
@@ -117,25 +150,6 @@ has '_migration_name_from_classname', is => 'ro', init_arg => undef, lazy => 1, 
   my ($junk,$name) = split(/Migration\_/,$class,2);
   $name
 }, isa => Maybe[Str];
-
-
-
-
-
-
-sub BUILD {
-  my $self = shift;
-  
-  my $name = $self->migration_name;
-  
-  die "invalid migration_name '$name' - can only contain alpha chars and underscore _" 
-    unless($name =~ /^[a-zA-Z0-9\_]+$/);
-  
-  die "At least one trigger_SchemaState required" unless (
-    scalar(@{ $self->trigger_SchemaStates }) > 0
-  );
-
-}
 
 
 sub new_from_migration_dir {

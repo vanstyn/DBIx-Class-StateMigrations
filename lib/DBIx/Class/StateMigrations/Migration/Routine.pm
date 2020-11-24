@@ -18,6 +18,15 @@ has 'routine_coderef', (
   default => sub { (shift)->_get_routine_coderef }
 );
 
+
+sub executed {
+  my ($self, $set) = @_;
+  $self->__executed(1) if ($set && ! $self->__executed);
+  $self->__executed
+}
+has '__executed', is => 'rw', init_arg => undef, isa => Bool, default => sub { 0 };
+
+
 sub _get_routine_coderef { ... }
 
 sub BUILD {
@@ -29,12 +38,16 @@ sub BUILD {
 sub execute {
   my ($self, $db) = @_;
   
+  die "already executed!" if ($self->executed);
+  
   die "execute must be supplied connected DBIx::Class::Schema instance argument" 
     unless($db && blessed($db) && $db->isa('DBIx::Class::Schema'));
   
   die "Supplied schema object is not connected" unless ($db->storage->connected);
   
-  $self->routine_coderef->( $db, $self )
+  my $ret = $self->routine_coderef->( $db, $self );
+  $self->executed(1);
+  return $ret;
 }
 
 

@@ -42,11 +42,12 @@ sub _get_routine_coderef {
     die "Supplied 'eval_code' did not return a CodeRef" unless (
       $coderef && ref($coderef)||'' eq 'CODE'
     );
-  
   }
   else {
     die "No file or eval_code - this is a bug"
   }
+  
+  $coderef
 }
 
 

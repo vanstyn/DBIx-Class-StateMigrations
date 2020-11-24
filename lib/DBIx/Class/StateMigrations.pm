@@ -44,6 +44,21 @@ sub has_matched_migration {
 sub num_migrations { scalar(@{ (shift)->Migrations }) }
 sub all_migrations { @{ (shift)->Migrations } }
 
+
+sub execute_matched_Migration_routines {
+  my $self = shift;
+  my $callback = shift;
+  
+  my $Migration = $self->matched_Migration or die join('',
+    'execute_matched_Migration(): no migration matched'
+  );
+  
+  $Migration->execute_routines( $self->connected_schema, $callback )
+}
+
+
+
+
 has 'migrations_dir', is => 'ro', default => sub { undef };
 has 'connected_schema', is => 'ro', required => 1, isa => InstanceOf['DBIx::Class::Schema'];
 
