@@ -19,8 +19,38 @@ use DBIx::Class::Schema::Diff::State;
 use DBIx::Class::StateMigrations::SchemaState;
 use DBIx::Class::StateMigrations::Migration;
 
+sub BUILD {
+  my $self = shift;
+  try{$self->connected_schema->storage->connected} or die join('',
+    'Supplied connected_schema "', $self->connected_schema, '" is not connected'
+  );
+}
+
+sub load_migrations {
+  my $self = shift;
+  $self->_validate_Migrations
+}
+
+sub load_current_state {
+  my $self = shift;
+ $self->current_SchemaState
+}
+
+sub has_matched_migration { 
+  my $self = shift;
+  $self->matched_Migration ? 1 : 0
+}
+
+sub num_migrations { scalar(@{ (shift)->Migrations }) }
+sub all_migrations { @{ (shift)->Migrations } }
+
 has 'migrations_dir', is => 'ro', default => sub { undef };
 has 'connected_schema', is => 'ro', required => 1, isa => InstanceOf['DBIx::Class::Schema'];
+
+has 'DBI_Driver_Name', is => 'ro', init_arg => undef, lazy => 1, default => sub {
+  my $self = shift;
+  $self->connected_schema->storage->dbh->{Driver}{Name}
+}, isa => Str;
 
 has 'schema_class', is => 'ro', lazy => 1, init_arg => 1, default => sub {
   my $self = shift;
@@ -62,6 +92,50 @@ has 'Migrations', is => 'ro', lazy => 1, default => sub {
   }
 }, isa => ArrayRef[InstanceOf['DBIx::Class::StateMigrations::Migration']];
 
+sub _validate_Migrations {
+  my $self = shift;
+  
+  my @wrong_driver = 
+    grep { $self->DBI_Driver_Name ne $_->DBI_Driver_Name } 
+    $self->all_migrations;
+  
+  my $number_wrong = scalar(@wrong_driver);
+  
+  die join('',
+    $number_wrong, ' of the loaded Migrations are for the wrong DBI driver ',
+    '(',$self->DBI_Driver_Name,'). Bad migrations are: ',
+    join(', ',map{ $_->migration_name . ' (driver: ' . $_->DBI_Driver_Name . ')'} @wrong_driver)
+  ) if ($number_wrong > 0);
+  
+  return 1;
+}
+
+
+has 'matched_Migration', is => 'ro', lazy => 1, default => sub {
+  my $self = shift;
+  
+  $self->_validate_Migrations;
+  
+  my @matches = ();
+  
+  for my $Migration (@{ $self->Migrations }) {
+    push @matches, $Migration if (
+      $Migration->matches_SchemaState( $self->current_SchemaState )
+    );
+  }
+  
+  my $match_count = scalar(@matches);
+  
+  die join('',
+    "ERROR: $match_count loaded Migrations ",
+    "(",join(',',map { $_->migration_name } @matches),") ",
+    "matched the current_SchemaState. This is a bug - only one Migration should match"
+  ) if ($match_count > 1);
+  
+  return $match_count == 1 ? $matches[0] : undef
+
+}, isa => Maybe[InstanceOf['DBIx::Class::StateMigrations::Migration']];
+
 
 has 'connect_info_args', is => 'ro', lazy => 1, default => sub {
   my $self = shift;
@@ -98,17 +172,53 @@ has 'current_SchemaState', is => 'ro', lazy => 1, default => sub {
 }, isa => InstanceOf['DBIx::Class::StateMigrations::SchemaState'];
 
 
-
-
-sub BUILD {
+sub create_dump_blank_Migration {
   my $self = shift;
-  try{$self->connected_schema->storage->connected} or die join('',
-    'Supplied connected_schema "', $self->connected_schema, '" is not connected'
+  
+  die join('',
+    "create_dump_blank_Migration(): ERROR! An existing Migration already ",
+    "matched for the current SchemaState. This option is only avaialable when ",
+    "there are no matches to make it easy to start a new Migration"
+  ) if ($self->matched_Migration);
+  
+  die join('',
+    "create_dump_blank_Migration(): Only available when using 'migrations_dir'"
+  ) unless ($self->migrations_dir);
+  
+  my $Dir = dir( $self->migrations_dir )->absolute;
+  
+  
+  die join('',
+    "create_dump_blank_Migration(): 'migrations_dir' is set to '$Dir' but does not exist. ",
+    "Please run: mkdir -p $Dir and try again"
+  ) unless (-e $Dir);
+  
+  die join('',
+    "create_dump_blank_Migration(): 'migrations_dir' '$Dir' exists but is not a directory" 
+  ) unless (-d $Dir);
+  
+  my $new_name = 'auto_' . $self->current_SchemaState->fingerprint;
+  
+  my $BlankMigration = DBIx::Class::StateMigrations::Migration->new(
+    migration_name => $new_name,
+    trigger_SchemaStates => [$self->current_SchemaState],
+    DBI_Driver_Name => $self->DBI_Driver_Name
   );
   
-  $self->Migrations;
+  my $new_dir = dir( $Dir, $new_name )->absolute;
   
+  die join('',
+    "create_dump_blank_Migration(): New dir '$new_dir' already exists!"
+  ) if (-e $new_dir);
+  
+  $new_dir->mkpath(1);
+  
+  $BlankMigration->write_subclass_pm_file( "$new_dir" );
+  
+  dir( $new_dir, 'routines' )->mkpath(1);
 }
+
+
 
 
 1;

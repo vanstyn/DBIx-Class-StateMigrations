@@ -10,11 +10,29 @@ use Types::Standard qw(:all);
 
 use Scalar::Util 'blessed';
 use Path::Class qw( file dir );
-use Data::Dumper::Concise;
+require Data::Dump;
 require Module::Locate;
+require Module::Runtime;
 
 use DBIx::Class::StateMigrations::Migration::Routine::PerlCode;
 use DBIx::Class::StateMigrations::Migration::Routine::SQL;
+
+
+sub matches_SchemaState {
+  my ($self, $SchemaState) = @_;
+  
+  die "check_SchemaState(): Bad argument - not a SchemaState object" unless (
+    $SchemaState && blessed($SchemaState)
+    && $SchemaState->isa('DBIx::Class::StateMigrations::SchemaState')
+  );
+  
+  for my $SS (@{ $self->trigger_SchemaStates }) {
+    return 1 if ($SS->fingerprint eq $SchemaState->fingerprint);
+  }
+
+  return 0
+}
+
 
 has 'migration_name', is => 'ro', lazy => 1, default => sub {
   my $self = shift;
@@ -26,6 +44,8 @@ has 'migration_name', is => 'ro', lazy => 1, default => sub {
 has 'trigger_SchemaStates', is => 'ro', required => 1, isa => ArrayRef[
   InstanceOf['DBIx::Class::StateMigrations::SchemaState']
 ];
+
+has 'DBI_Driver_Name', is => 'ro', required => 1, isa => Str;
 
 has 'completed_SchemaState', is => 'ro', isa => Maybe[
   InstanceOf['DBIx::Class::StateMigrations::SchemaState']
@@ -132,7 +152,7 @@ sub new_from_migration_dir {
     my $ext = (reverse split(/\./,$File->basename))[0];
     next unless ($ext && lc($ext) eq 'pm');
     
-    die "Error - multiple pm files found in directory '$dir'";
+    die "Error - multiple pm files found in directory '$dir'" if ($pm_file);
     
     $pm_file = $File->absolute;
   }
@@ -146,8 +166,8 @@ sub new_from_migration_dir {
   
   die "Not loading $pm_file - class named '$mclass' already loaded!" if (Module::Locate::locate($mclass));
   
-  my $require = "require '$pm_file'";
-  eval $require;
+  eval "use lib '$Dir'";
+  Module::Runtime::require_module($mclass);
   
   die "Error loading $pm_file - '$mclass' still not loaded after require" unless (Module::Locate::locate($mclass));
   
@@ -169,6 +189,8 @@ sub new_from_migration_dir {
 sub as_subclass_pm_code {
   my $self = shift;
   
+  my @embed_attrs = qw(DBI_Driver_Name completed_SchemaState trigger_SchemaStates);
+  
   my $classname = join('_','Migration',$self->migration_name);
   
   my @pm_file_lines = (
@@ -177,20 +199,41 @@ sub as_subclass_pm_code {
     'use strict;',
     'use warnings;','',
     'use Moo;',
-    'extends "DBIx::Class::StateMigrations::Migration";',''
+    'extends "DBIx::Class::StateMigrations::Migration";',
+    '',
+    $self->__generate_inline_pm_code_lines_for_attrs(@embed_attrs),
+    '1',''
   );
 
-  push @pm_file_lines, q~has '+trigger_SchemaStates', default => sub { ~,
-    Dumper( $self->trigger_SchemaStates ),
-  '};','';
-  
-  push @pm_file_lines, q~has '+completed_SchemaState', default => sub { ~,
-    Dumper( $self->completed_SchemaState ),
-  '};','';
-  
   return join("\n",@pm_file_lines);
-
 }
+
+
+sub __generate_inline_pm_code_lines_for_attrs {
+  my ($self, @attrs) = @_;
+  scalar(@attrs) > 0 or die "no attrs supplied";
+  
+  my @lines = ();
+  
+  for my $attr (@attrs) {
+
+    $self->can($attr) or die "No such attr '$attr'";
+    
+    my $val = $self->$attr;
+    
+    if(ref($val)) {
+      push @lines, join('',"has '+",$attr,q~', default => sub { ~,$self->_Dump($val),q~ };~),'';
+    }
+    else {
+      $val = defined $val ? "'$val'" : 'undef';
+      push @lines, join('',"has '+",$attr,q~', default => sub { ~,$val,q~ };~),'';
+    }
+  }
+
+  @lines
+}
+
+
 
 sub write_subclass_pm_file {
   my $self = shift;
@@ -200,13 +243,33 @@ sub write_subclass_pm_file {
   
   -d $Dir or die "'$dir' does not exist or is not a directory";
   
-  my $pm_file = file( $Dir, $self->migration_name . '.pm' );
+  my $pm_file = file( $Dir, 'Migration_' . $self->migration_name . '.pm' );
   
   -f $pm_file and die "write_subclass_pm_file(): pm file '$pm_file' already exists";
   
   $pm_file->spew( $self->as_subclass_pm_code );
-
+  
+  
+  my $NewMigration = $self->new_from_migration_dir( "$Dir" );
+  
+  die "Loading newly creted migration class failure - not the same migration_name" unless (
+    $self->migration_name eq $NewMigration->migration_name
+  );
+  
+  return 1;
 }
+
+
+sub _Dump {
+  my $self = shift;
+  my $obj = shift;
+  
+  require Data::Dump;
+  local $Data::Dump::INDENT = '  ';
+  
+  return Data::Dump::dump($obj);
+}
+
 
 
 1;

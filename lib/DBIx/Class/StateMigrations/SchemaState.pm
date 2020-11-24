@@ -12,7 +12,9 @@ use Types::Standard qw(:all);
 has 'fingerprint', is => 'ro', lazy => 1, default => sub {
   my $self = shift;
   die __PACKAGE__ . ' must supply either a checksum "fingerprint" or "DiffState"' unless ($self->DiffState);
-  $self->filtered_DiffState->fingerprint
+  my $fp = $self->filtered_DiffState->fingerprint;
+  $fp =~ s/\-/_/g;
+  return $fp
 }, isa => Str;
 
 has 'DiffState' => (
