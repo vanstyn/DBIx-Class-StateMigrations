@@ -35,8 +35,7 @@ sub BUILD {
     scalar(@{ $self->trigger_SchemaStates }) > 0
   );
   
-  $_->validate_fingerprint for (@{ $self->trigger_SchemaStates });
-  $_->validate_fingerprint for (@{ $self->frozen_trigger_SchemaStates });
+  $self->_validate_fingerprints;
 }
 
 sub invalid { 0 }
@@ -376,6 +375,21 @@ sub write_subclass_pm_file {
   return 1;
 }
 
+
+
+sub _validate_fingerprints {
+  my $self = shift;
+  
+  $_->validate_fingerprint for (@{ $self->trigger_SchemaStates });
+  $_->validate_fingerprint for (@{ $self->frozen_trigger_SchemaStates });
+  
+  my %f1 = map { $_->fingerprint => 1 } (@{ $self->trigger_SchemaStates });
+  my %f2 = map { $_->fingerprint => 1 } (@{ $self->frozen_trigger_SchemaStates });
+  
+  for (keys %f2) {
+    $f1{$_} or die "mismatch with frozen copy of SchemaStates - frozen fingerprint '$_' not found in trigger_SchemaStates";
+  }
+}
 
 
 sub _Invalid {
