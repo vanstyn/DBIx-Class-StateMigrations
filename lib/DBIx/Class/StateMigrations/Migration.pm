@@ -53,9 +53,9 @@ sub number_routines { scalar(@{ (shift)->Routines }) };
 
 has 'Routines', is => 'ro', required => 1, lazy => 1, default => sub {
   my $self = shift;
-  return undef unless ($self->is_migration_class && $self->directory);
+  return [] unless ($self->is_migration_class && $self->directory);
   my $Dir = dir( $self->directory, 'routines' )->absolute;
-  return undef unless (-d $Dir);
+  return [] unless (-d $Dir);
   
   my @routines = ();
   
