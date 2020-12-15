@@ -97,7 +97,7 @@ has 'Migrations', is => 'ro', lazy => 1, default => sub {
     for my $m_dir ($Dir->children) {
       next unless $m_dir->is_dir;
       my $Migration = DBIx::Class::StateMigrations::Migration
-        ->new_from_migration_dir($m_dir->absolute->stringify);
+        ->new_from_migration_dir($m_dir->absolute->stringify,$self->DBI_Driver_Name);
       push @migrations, $Migration if ($Migration);
     }
     return \@migrations;
@@ -105,22 +105,46 @@ has 'Migrations', is => 'ro', lazy => 1, default => sub {
   else {
     return []
   }
-}, isa => ArrayRef[InstanceOf['DBIx::Class::StateMigrations::Migration']];
+}, isa => ArrayRef[InstanceOf[
+  'DBIx::Class::StateMigrations::Migration',
+  'DBIx::Class::StateMigrations::Migration::Invalid'
+]];
 
 sub _validate_Migrations {
   my $self = shift;
   
-  my @wrong_driver = 
-    grep { $self->DBI_Driver_Name ne $_->DBI_Driver_Name } 
-    $self->all_migrations;
+  my (@good,@warns,@dies);
+  my @all = $self->all_migrations;
+
+  for (@all) {
+    ! $_->invalid ? push(@good, $_) :
+    ! $_->fatal   ? push(@warns,$_) : 
+                    push(@dies, $_)
+  }
   
-  my $number_wrong = scalar(@wrong_driver);
+  my %num = (
+    all   => scalar(@all),
+    good  => scalar(@good),
+    warns => scalar(@warns),
+    dies  => scalar(@dies)
+  );
+   
+  die join("\n",'',
+    "   *** Attempted to load $num{all} Migrations:",
+    "       - $num{good} loaded.",
+    "       - $num{warns} not loaded but ignored" . ($num{warns} ? ':'.join("\n",'',
+                map { "          * ".$_->reason } @warns) : ()),
+    "       - $num{dies} not loaded due to fatal errors:",
+                 ( map { "          * ".$_->reason } @dies ),'','',''
+  ) if ($num{dies});
   
-  die join('',
-    $number_wrong, ' of the loaded Migrations are for the wrong DBI driver ',
-    '(',$self->DBI_Driver_Name,'). Bad migrations are: ',
-    join(', ',map{ $_->migration_name . ' (driver: ' . $_->DBI_Driver_Name . ')'} @wrong_driver)
-  ) if ($number_wrong > 0);
+  if ($num{warns}) {
+    warn join("\n",
+      "    *** Ignoring $num{warns} of the $num{all} total identified Migrations:",
+       (map { "        - ".$_->reason } @warns),'',
+    );
+    @{$self->Migrations} = @good;
+  }
   
   return 1;
 }
