@@ -18,10 +18,17 @@ has 'fingerprint', is => 'ro', lazy => 1, default => sub {
 }, isa => Str;
 
 has 'DiffState' => (
-  is => 'ro', lazy => 1,
+  is => 'rwp', lazy => 1,
   isa => Maybe[InstanceOf['DBIx::Class::Schema::Diff::State']],
   default => sub { undef }
 );
+
+sub _clear_DiffState {
+  my $self = shift;
+  $self->fingerprint; # make sure we've already recorded the fingerprint
+  $self->_set_DiffState( undef )
+}
+
 
 has 'diff_filters', is => 'ro', default => sub {[]}, isa => ArrayRef;
 
