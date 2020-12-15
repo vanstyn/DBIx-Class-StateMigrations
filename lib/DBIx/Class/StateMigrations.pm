@@ -272,8 +272,12 @@ sub create_dump_blank_Migration {
 
 
 sub DEMOLISH {
-  my $self = shift;
+  my ($self, $gd) = @_;
   
+  # "global destruction" meaning the program is terminating and in that case we
+  # don't need to do any of this, and worse, it could cause problems (thanks mst)
+  return if $gd; 
+
   # Clean up after ourselves. We have to handle additional things beyond normal
   # object instances which clean themselves up automatically because we have 
   # created/loaded new classes and packages dynamically during the course of
