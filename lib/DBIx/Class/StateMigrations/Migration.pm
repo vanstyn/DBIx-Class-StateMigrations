@@ -23,6 +23,8 @@ use DBIx::Class::StateMigrations::Migration::Routine::PerlCode;
 use DBIx::Class::StateMigrations::Migration::Routine::SQL;
 use DBIx::Class::StateMigrations::Migration::Invalid;
 
+our $LOADED_MIGRATION_SUBCLASSES = {};
+
 sub BUILD {
   my $self = shift;
   
@@ -231,6 +233,7 @@ sub new_from_migration_dir {
     try {
       eval "use lib '$Dir'";
       Module::Runtime::require_module($mclass);
+      $LOADED_MIGRATION_SUBCLASSES->{$mclass}++;
     }
     catch {
       $caught = shift;

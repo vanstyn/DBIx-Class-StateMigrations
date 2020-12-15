@@ -11,6 +11,8 @@ use Moo;
 use Types::Standard qw(:all);
 use Scalar::Util 'blessed';
 use Try::Tiny;
+use Class::Unload;
+use Class::Inspector;
 
 use Path::Class qw/file dir/;
 use DBIx::Class::Schema::Diff 1.11;
@@ -56,7 +58,7 @@ sub execute_matched_Migration_routines {
   $Migration->execute_routines( $self->connected_schema, $callback )
 }
 
-
+has '__loaded_vagrant_classes', is => 'ro', isa => HashRef, default => sub {{}};
 
 
 has 'migrations_dir', is => 'ro', default => sub { undef };
@@ -93,6 +95,8 @@ has 'Migrations', is => 'ro', lazy => 1, default => sub {
     -d $Dir or die "migrations dir '$dir' not found or is not a directory";
     
     my @migrations = ();
+    
+    local $DBIx::Class::StateMigrations::Migration::LOADED_MIGRATION_SUBCLASSES = $self->__loaded_vagrant_classes;
     
     for my $m_dir ($Dir->children) {
       next unless $m_dir->is_dir;
@@ -197,6 +201,8 @@ has 'loaded_schema_class', is => 'ro', lazy => 1, default => sub {
   DBIx::Class::Schema::Loader::make_schema_at(
     $ref_class => $self->loader_options, $self->connect_info_args  
   ) or die "Loading schema failed";
+  
+  $self->__loaded_vagrant_classes->{$ref_class}++;
 
   $ref_class
 }, isa => Str;
@@ -264,6 +270,41 @@ sub create_dump_blank_Migration {
 }
 
 
+
+sub DEMOLISH {
+  my $self = shift;
+  
+  # Clean up after ourselves. We have to handle additional things beyond normal
+  # object instances which clean themselves up automatically because we have 
+  # created/loaded new classes and packages dynamically during the course of
+  # our normal function of operation, and these have no validity beyond our
+  # scope, and some of them could be quite large, so we want to get rid of them
+  
+  # Throughout our lifecycle we've been tracking all the dynamically generated 
+  # packages/classes in this hashref:
+  my @classes = keys %{ $self->__loaded_vagrant_classes };
+  
+  # This is very agressive but I can't think of any downsides - blow away
+  # the entire object leaveing it as a blessed empty HashRef. This is so
+  # all the objects, such as Migration class object instances, will get 
+  # garbage collected now, so we can then safely and cleanly unload the 
+  # actual classes and not have to worry about any instances existing
+  %$self = (); 
+  
+  # and now unload the dynamic/migration classes by hand as our final act:
+  
+  for (@classes) {
+    if (Class::Inspector->loaded( $_ )) {
+      #warn " >>> Vagrant class $_ is loaded\n";
+      Class::Unload->unload( $_ ) 
+        #? warn "  >> unloaded $_ \n"
+        #: warn "  >> FAILED to unload $_ \n";
+    }
+    else {
+      #warn " >>> Vagrant class $_ is not loaded\n";
+    }
+  }
+}
 
 
 1;
