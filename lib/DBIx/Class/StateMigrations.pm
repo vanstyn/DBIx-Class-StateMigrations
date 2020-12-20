@@ -5,7 +5,7 @@ use warnings;
 
 # ABSTRACT: Schema migrations via checksums instead of versions
 
-our $VERSION = '0.001';
+our $VERSION = '0.002';
 
 use Moo;
 use Types::Standard qw(:all);
